@@ -1,4 +1,5 @@
 import {Extension} from './extension';
+import {isFirefox} from '../utils/platform';
 import {getHelpURL} from '../utils/links';
 
 // Initialize extension
@@ -12,23 +13,32 @@ chrome.runtime.onInstalled.addListener(({reason}) => {
 });
 
 declare const __DEBUG__: boolean;
+declare const __PORT__: number;
 const DEBUG = __DEBUG__;
 
 if (DEBUG) {
-    // Reload extension on connection
+    const PORT = __PORT__;
     const listen = () => {
-        const req = new XMLHttpRequest();
-        req.open('GET', 'http://localhost:8890/', true);
-        req.overrideMimeType('text/plain');
-        req.onload = () => {
-            if (req.status >= 200 && req.status < 300 && req.responseText === 'reload') {
-                chrome.runtime.reload();
-            } else {
-                setTimeout(listen, 2000);
+        const socket = new WebSocket(`ws://localhost:${PORT}`);
+        const send = (message: any) => socket.send(JSON.stringify(message));
+        socket.onmessage = (e) => {
+            const message = JSON.parse(e.data);
+
+            if (message.type === 'reload') {
+                send({type: 'reloading'});
+                const cssOnly = message.files.every((file) => file.endsWith('.less'));
+                if (cssOnly) {
+                    send({type: 'get-popup-stylesheet', isFirefox: isFirefox()});
+                } else {
+                    chrome.runtime.reload();
+                }
+            }
+
+            if (message.type === 'popup-stylesheet') {
+                chrome.runtime.sendMessage({type: 'popup-stylesheet-update', data: message.content});
             }
         };
-        req.onerror = () => setTimeout(listen, 2000);
-        req.send();
+        socket.onclose = () => setTimeout(listen, 1000);
     };
-    setTimeout(listen, 2000);
+    listen();
 }
